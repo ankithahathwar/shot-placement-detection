@@ -2,17 +2,19 @@
 inference.py
 
 Runs the trained YOLOv8 model on a new target image and outputs bullet hole
-coordinates in mm, relative to the bullseye center — same format as the
+coordinates in mm, relative to the target center — same format as the
 manually collected ScattDB txt files.
 
 Pipeline:
-    1. Detect bullets, bullseye, outerring in the image
-    2. Filter out low-confidence detections
-    3. Deduplicate near-identical bullet detections (same physical hole
-       detected twice) using center-distance, not IoU — safer for tight
-       shot groups where genuinely separate holes can be close together
-    4. Derive center from outerring (more reliable than bullseye class)
-    5. Convert pixel coordinates to mm using outerring's known real diameter
+    1. Detect bullet holes using YOLOv8 (this class trained well — 0.95 mAP50)
+    2. Find the black circle (rings 7-10) directly via classical CV contour
+       detection — more reliable than the YOLO 'outerring' class, which
+       suffered from inconsistent annotation sizing during training
+    3. Filter out low-confidence bullet detections
+    4. Deduplicate near-identical bullet detections (same physical hole
+       detected twice) using center-distance
+    5. Convert pixel coordinates to mm using the black circle's known
+       real diameter (59.5mm, ISSF 10m air pistol spec)
     6. Save results as a txt file: one "x_mm, y_mm" line per bullet hole
 
 Usage:
@@ -26,17 +28,21 @@ import sys
 import os
 # pyrefly: ignore [missing-import]
 from ultralytics import YOLO
+# pyrefly: ignore [missing-import]
+import cv2
 
 # ── Config ───────────────────────────────────────────────────────────────────
 MODEL_PATH = "best.pt"
-OUTER_RING_DIAMETER_MM = 59.5   # confirmed: outerring = black circle (7-10 ring boundary)
+BLACK_CIRCLE_DIAMETER_MM = 59.5   # ISSF 10m air pistol — rings 7-10 boundary
 
-CLASS_BULLET    = 0   # matches your training: 0 = bullets
-CLASS_BULLSEYE  = 1   # 1 = bullseye
-CLASS_OUTERRING = 2   # 2 = outerring
+CLASS_BULLET   = 0   # matches your training: 0 = bullets
+CLASS_BULLSEYE = 1   # 1 = bullseye (unused — unreliable, ignored)
+CLASS_OUTERRING = 2  # 2 = outerring (unused — unreliable, replaced by CV below)
 
-CONFIDENCE_THRESHOLD  = 0.5   # discard detections below this confidence
+CONFIDENCE_THRESHOLD  = 0.5   # discard bullet detections below this confidence
 DUPLICATE_DISTANCE_PX = 8     # bullet centers closer than this = same hole, keep higher-conf one
+DUPLICATE_DISTANCE_MM = 1.5
+BLACK_THRESHOLD = 60   # pixel intensity below this = considered "black" for circle detection
 # ────────────────────────────────────────────────────────────────────────────
 
 
@@ -48,6 +54,29 @@ def get_box_center_and_size(box):
     w = x2 - x1
     h = y2 - y1
     return cx, cy, w, h
+
+
+def find_black_circle(image_path):
+    """
+    Find the black circle (rings 7-10) directly from pixel data using
+    contour detection. Returns (center_x, center_y, diameter_px) or None
+    if no suitable circle was found.
+    """
+    img = cv2.imread(image_path, cv2.IMREAD_GRAYSCALE)
+    if img is None:
+        return None
+
+    _, thresh = cv2.threshold(img, BLACK_THRESHOLD, 255, cv2.THRESH_BINARY_INV)
+    contours, _ = cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+
+    if not contours:
+        return None
+
+    # the black circle should be the largest black blob in the image
+    largest = max(contours, key=cv2.contourArea)
+    (cx, cy), radius = cv2.minEnclosingCircle(largest)
+
+    return cx, cy, radius * 2
 
 
 def deduplicate_by_distance(bullet_candidates, min_distance_px=DUPLICATE_DISTANCE_PX):
@@ -77,56 +106,50 @@ def deduplicate_by_distance(bullet_candidates, min_distance_px=DUPLICATE_DISTANC
 
 def process_image(model, image_path):
     """
-    Run detection on one image, derive center + scale, convert bullet
-    holes to mm coordinates. Returns list of (x_mm, y_mm) tuples, or None
-    if no outerring was detected (can't establish scale/center).
+    Run bullet detection + classical center/scale detection on one image.
+    Returns list of (x_mm, y_mm) tuples, or None if the black circle
+    couldn't be found (can't establish scale/center).
     """
-    results = model(image_path, verbose=False)  # default IoU — dedup handled separately below
+    # ── Step 1: find center + scale using classical CV, NOT the YOLO outerring class ──
+    circle_result = find_black_circle(image_path)
+    if circle_result is None:
+        print(f"  ⚠️  Could not find black circle in {os.path.basename(image_path)} — skipping")
+        return None
+
+    center_x, center_y, diameter_px = circle_result
+    pixels_per_mm = diameter_px / BLACK_CIRCLE_DIAMETER_MM
+
+    duplicate_distance_px = DUPLICATE_DISTANCE_MM * pixels_per_mm
+
+    print(f"  Center: ({center_x:.1f}, {center_y:.1f}) px | "
+          f"Black circle diameter: {diameter_px:.1f} px | "
+          f"Scale: {pixels_per_mm:.3f} px/mm")
+
+    # ── Step 2: run YOLO just for bullet hole detection ──
+    results = model(image_path, verbose=False)
     result = results[0]
     boxes = result.boxes
 
     bullet_candidates = []
-    outerring_boxes = []
-
     for box in boxes:
         cls = int(box.cls[0])
         conf = float(box.conf[0])
 
+        if cls != CLASS_BULLET:
+            continue
         if conf < CONFIDENCE_THRESHOLD:
             continue
 
-        if cls == CLASS_BULLET:
-            cx, cy, _, _ = get_box_center_and_size(box)
-            bullet_candidates.append((box, conf, cx, cy))
-        elif cls == CLASS_OUTERRING:
-            outerring_boxes.append(box)
+        cx, cy, _, _ = get_box_center_and_size(box)
+        bullet_candidates.append((box, conf, cx, cy))
 
-    if not outerring_boxes:
-        print(f"  ⚠️  No outerring detected in {os.path.basename(image_path)} — skipping")
-        return None
-
-    if len(outerring_boxes) > 1:
-        outerring_boxes.sort(
-            key=lambda b: (b.xyxy[0][2] - b.xyxy[0][0]) * (b.xyxy[0][3] - b.xyxy[0][1]),
-            reverse=True
-        )
-        print(f"  ℹ️  {len(outerring_boxes)} outerring detections found, using largest")
-
-    best_ring = outerring_boxes[0]
-    center_x, center_y, ring_w, ring_h = get_box_center_and_size(best_ring)
-
-    ring_diameter_px = (ring_w + ring_h) / 2
-    pixels_per_mm = ring_diameter_px / OUTER_RING_DIAMETER_MM
-
-    print(f"  Center: ({center_x:.1f}, {center_y:.1f}) px | "
-          f"Ring diameter: {ring_diameter_px:.1f} px | "
-          f"Scale: {pixels_per_mm:.3f} px/mm")
-
-    bullet_boxes = deduplicate_by_distance(bullet_candidates)
+    # ── Step 3: deduplicate near-identical bullet detections ──
+    bullet_boxes = deduplicate_by_distance(bullet_candidates, min_distance_px=duplicate_distance_px)
     if len(bullet_candidates) != len(bullet_boxes):
         print(f"  🔁 Removed {len(bullet_candidates) - len(bullet_boxes)} duplicate "
-              f"detection(s) (centers within {DUPLICATE_DISTANCE_PX}px)")
+              f"detection(s) (centers within {duplicate_distance_px:.1f}px)")
 
+    # ── Step 4: convert to mm, relative to black circle center ──
     coords_mm = []
     for hole_box in bullet_boxes:
         hole_x, hole_y, _, _ = get_box_center_and_size(hole_box)
@@ -140,6 +163,11 @@ def process_image(model, image_path):
         coords_mm.append((x_mm, y_mm))
 
     print(f"  ✅ {len(coords_mm)} bullet holes converted to mm coordinates")
+
+    EXPECTED_SHOTS = 10
+    if len(coords_mm) != EXPECTED_SHOTS:
+        # pyrefly: ignore [parse-error]
+        print(f"  ⚠️  Expected {EXPECTED_SHOTS} shots, got {len(coords_mm)} — FLAG FOR MANUAL REVIEW")
     return coords_mm
 
 
@@ -178,7 +206,7 @@ def main():
     coords_mm = process_image(model, image_path)
 
     if coords_mm is None:
-        print("\n❌ Could not process image — no outerring detected.")
+        print("\n❌ Could not process image.")
         sys.exit(1)
 
     save_coords(coords_mm, output_path)
