@@ -1,0 +1,59 @@
+# ── Python ───────────────────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+ENV/
+.venv/
+*.egg-info/
+.pytest_cache/
+
+# ── Virtual environments (you're using one called 'bull') ──────────────────
+bull/
+.conda/
+
+# ── Model weights — too large for normal git, use GitHub Releases instead ──
+*.pt
+*.pth
+*.onnx
+*.engine
+
+# ── Datasets — images and coordinate files live in Roboflow / your own backup,
+#    not in this repo. Keeps the repo lightweight and avoids duplicating data. ──
+test_images/
+outputs/
+debug_output/
+*.jpg
+*.jpeg
+*.png
+*.tif
+*.tiff
+!examples/*.jpg
+!examples/*.png
+# (the ! lines above let you keep a few example images for the README if you want)
+
+# ── Roboflow downloaded datasets (if you ever run download locally) ────────
+*-1/
+*-2/
+*-3/
+data.yaml.bak
+
+# ── Colab / Jupyter ──────────────────────────────────────────────────────────
+.ipynb_checkpoints/
+
+# ── Ultralytics training run outputs ─────────────────────────────────────────
+runs/
+bullet_hole_detection/
+
+# ── OS / editor junk ─────────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+.vscode/
+*.swp
+
+# ── Secrets — never commit API keys ──────────────────────────────────────────
+.env
+*api_key*
