@@ -48,6 +48,9 @@ data.yaml.bak
 runs/
 bullet_hole_detection/
 
+# ── Alternative/unused debug scripts ─────────────────────────────────────────
+debug_hough_circle.py
+
 # ── OS / editor junk ─────────────────────────────────────────────────────────
 .DS_Store
 Thumbs.db
