@@ -1,6 +1,6 @@
-# Snyptr PostShot: Target Detection & Bullet Hole Coordinate Converter
+# Shot Placement Detection: Target Detection & Bullet Hole Coordinate Converter
 
-Snyptr PostShot is a computer vision pipeline that processes target images shot with **10m Air Pistol (ISSF Spec)** from the **ScattDB** dataset. It detects the target center, refines the black target area, detects bullet holes using a trained YOLOv8 model, and outputs the exact shot coordinates in real-world millimeters relative to the target center.
+Shot Placement Detection is a computer vision pipeline that processes target images shot with **10m Air Pistol (ISSF Spec)** from the **ScattDB** dataset. It detects the target center, refines the black target area, detects bullet holes using a trained YOLOv8 model, and outputs the exact shot coordinates in real-world millimeters relative to the target center.
 
 ---
 
@@ -19,7 +19,7 @@ Snyptr PostShot is a computer vision pipeline that processes target images shot 
 ## Project Structure
 
 ```
-Snyptr_PostShot/
+shot-placement-detection/
 ├── best.pt                       # Trained weights of the YOLOv8 model (ignored by Git)
 ├── debug_circle_detection.py     # Debug tool for contour and circularity filtering
 ├── debug_hough_circle.py         # Debug tool for testing OpenCV Hough Circle Transform
@@ -27,7 +27,7 @@ Snyptr_PostShot/
 ├── inference.py                  # Core pipeline CLI script
 ├── visualize_detections.py      # Core script to visually verify detection results
 ├── notebooks/
-│   └── Snyptr_v8.ipynb           # Jupyter notebook used for YOLOv8 model training & validation
+│   └── _v8.ipynb                 # Jupyter notebook used for YOLOv8 model training & validation
 ├── outputs/                      # Saved output text files containing mm coordinates (ignored)
 ├── debug_output/                 # Visual verification image files (ignored)
 ├── test_images/                  # Sample test target images (ignored)
@@ -41,8 +41,8 @@ Snyptr_PostShot/
 
 ### 1. Clone the repository and navigate into it:
 ```bash
-git clone https://github.com/ankithahathwar/Snyptr_PostShot.git
-cd Snyptr_PostShot
+git clone https://github.com/ankithahathwar/shot-placement-detection.git
+cd shot-placement-detection
 ```
 
 ### 2. Create and activate a Virtual Environment (named `bull`):
